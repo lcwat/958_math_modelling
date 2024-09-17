@@ -468,6 +468,7 @@ to_plot |>
 
 
 
+
 # 5. poisson regression ---------------------------------------------------
 
 # conduct poisson glm with same model
@@ -496,6 +497,13 @@ nb_poisson_sum_stop <- glm.nb(
   sum_stop ~ c.iti*c.ratio + c.ratio2,
   data = go_no_go_summed_resp
 )
+
+# try saving and loading as rds file for efficiency with longer running models
+saveRDS(nb_poisson_sum_stop, file = "nb-poisson-model-go-no-go.rds")
+nb_rds <- readRDS("nb-poisson-model-go-no-go.rds")
+
+# check it!
+summary(nb_rds)
 
 # try zero inflated model 
 poisson_zero_infl <- zeroinfl(
@@ -550,14 +558,18 @@ go_no_go_summed_resp |>
     axis.text.x = element_text(angle = -90)
   )
 
+# calc mean
+mean_iti <- mean(go_no_go_summed_resp$iti)
+mean_ratio <- mean(go_no_go_summed_resp$ratio)
+
 # plot along specific ratio values and calculate/visualize errors
 to_plot <- data.frame(
   emmeans(
     nb_poisson_sum_stop, # model
     ~c.iti*c.ratio, # predictors to use
     at = list(
-      c.iti = seq(-380, 410, 20), # predict along splits of c.iti
-      c.ratio = c(-4, -2, 2, 4) # specific c.ratio values to predict w/ c.iti
+      c.iti = seq(400, 1250, 50) - mean_iti, # predict along splits of c.iti
+      c.ratio = c(1, 4, 8, 10) - mean_ratio # specific c.ratio values to predict w/ c.iti
     )
   )
 )
@@ -565,22 +577,22 @@ to_plot <- data.frame(
 # uncenter iti
 to_plot <- to_plot |> 
   mutate(
-    iti = c.iti + mean(go_no_go_summed_resp$iti),
-    ratio = c.ratio + mean(go_no_go_summed_resp$ratio)
+    iti = c.iti + mean_iti,
+    ratio = c.ratio + mean_ratio
   )
 
 # now plot
 to_plot |> 
   ggplot(
-    aes(x = iti, y = exp(emmean) - 1)
+    aes(x = iti, y = exp(emmean))
   ) +
   
   # plot the model fit and error
   geom_line() +
   geom_ribbon(
     aes(
-      ymin = exp(emmean - SE) - 1, # lower bound of ribbon
-      ymax = exp(emmean + SE) - 1, # higher bound of ribbon
+      ymin = exp(emmean - SE), # lower bound of ribbon
+      ymax = exp(emmean + SE), # higher bound of ribbon
       fill = ratio,
       col = NA, 
       alpha = .3
