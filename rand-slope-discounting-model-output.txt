@@ -1,0 +1,7 @@
+effect,group,term,estimate,std.error,statistic
+1,fixed,NA,(Intercept),9.23003071123802,0.353416465944681,26.1165836927439
+2,fixed,NA,delay,-0.456437568299037,0.0549056989802613,-8.31311825140641
+3,ran_pars,subject,sd__(Intercept),0.673116616931521,NA,NA
+4,ran_pars,subject,cor__(Intercept).delay,1,NA,NA
+5,ran_pars,subject,sd__delay,0.100872090090744,NA,NA
+6,ran_pars,Residual,sd__Observation,0.734016374313821,NA,NA
