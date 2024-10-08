@@ -15,6 +15,7 @@
 # load libraries ----------------------------------------------------------
 
 library(tidyverse) # cleaning and plotting
+library(Lahman) # lahman baseball data
 library(broom) # tidy model reports (ONLY FOR LM OR GLM)
 library(broom.mixed) # tidy model reports for glmer and other model types
 library(lme4) # linear mixed effects modelling
@@ -25,6 +26,25 @@ library(emmeans) # report predictions
 
 
 # load data and clean -----------------------------------------------------
+
+# baseball data from the lahman package of historical data
+LahmanData
+
+# some interesting data
+pitching_postseason <- Lahman::PitchingPost
+
+savant_aggreg_pitch_metrics <- read_csv("data/baseball-savant-pitch-average-data.csv")
+
+summary(pitching_postseason)
+View(pitching_postseason)
+
+# could look at how advanced pitching metrics predict postseason team performance
+team_postseason_wl <- Lahman::SeriesPost
+
+summary(team_postseason_wl)
+View(team)
+
+# keep only what you want and merge pitching with team
 
 
 
