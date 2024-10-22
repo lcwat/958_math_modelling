@@ -5,7 +5,7 @@ format: html
 editor: visual
 ---
 
-## Exercise 7
+## Exercise 7 
 
 The goal of this exercise is to practice running bootstrapping in R with the `boot` package.
 
