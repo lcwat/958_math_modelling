@@ -1,0 +1,747 @@
+---
+title: "watson-hw-7"
+author: "Luke Watson"
+format: html
+editor: visual
+---
+
+## Exercise 7
+
+The goal of this exercise is to practice running bootstrapping in R with the `boot` package.
+
+### Load Packages
+
+Here are the libraries and data I will be using:
+
+```{r}
+#| label: load-packages
+#| warning: false
+
+library(tidyverse) # cleaning
+library(boot) # for running bootstraps
+library(lme4) # mixed effect modelling and glmer
+library(broom.mixed) # tidy model reports for lmer and glmer
+
+```
+
+```{r}
+#| label: load data and set seed
+#| warning: false
+#| include: false
+
+# us arrests data set, arrests for 4 diff types of violent crime by state
+usarrests <- USArrests
+
+# load in the battalion dataset
+battalion <- read_csv("data/battalion.csv")
+
+# grab uhm data from video I watched
+# tracks uhms by speakers using counter, data represent inter uhm times
+uhm_counts <- read_csv("data/uhmms_publicVersion.csv")
+
+# set seed for randomization consistency
+set.seed(1234)
+```
+
+### 1. Bootstrap model fit indices (R-squared) for different models
+
+I created and ran four bootstrapped statistics for two models. The main effects only model using assault, urban population, and rape per 100,000 to predict murder per 100,000 using the statewide arrest data from the 1970s. The full factorial model included each of these same main effects and all of their interactions. For each model, I used either 25 or 10,000 samples to bootstrap the R-squared, resulting in 4 bootstraps in total.
+
+#### Figure 1
+
+```{r}
+#| warning: false
+#| echo: false
+#| label: bootstrapping model r-squared and plotting results for different models and bootstrap sample sizes
+
+# 1st need to define function that will sample our dataset with replacement
+sample_subset_and_calc_r_squared <- function(formula, d, indices) {
+  # create subset defined by boot's indicies
+  df <- d[indices, ]
+  
+  # return model R2 ran from main effects model
+  return(summary(lm(formula, data = df))$r.squared)
+}
+
+# now can run boot using function in statistic field
+main_eff_boot_R_squared_25 <- boot(
+  usarrests, statistic = sample_subset_and_calc_r_squared,
+  R = 25, # run 25 times
+  formula = Murder ~ Assault + UrbanPop + Rape
+)
+
+# read in 10000 samples results
+main_eff_boot_R_squared_10000 <- read_rds("rds/main_eff_boot_R_squared_10000.rds")
+
+# now do the full factorial model
+ixn_boot_R_squared_25 <- boot(
+  data = usarrests, statistic = sample_subset_and_calc_r_squared,
+  R = 25, formula = Murder ~ Assault * UrbanPop * Rape
+)
+
+# read in
+ixn_boot_R_squared_10000 <- read_rds("rds/ixn_boot_R_squared_10000.rds")
+
+# create figure displaying results of all
+# plot all on the histogram
+boot_main_eff_25 <- as.data.frame(main_eff_boot_R_squared_25$t)
+boot_ixn_25 <- as.data.frame(ixn_boot_R_squared_25$t)
+boot_main_eff <- as.data.frame(main_eff_boot_R_squared_10000$t)
+boot_ixn <- as.data.frame(ixn_boot_R_squared_10000$t)
+
+# combine into same df with identifier that lets ggplot know how to color or facet
+boot_main_eff_25 <- boot_main_eff_25 |> 
+  mutate(
+    model = "main effects only (R = 25)", 
+    t0 = main_eff_boot_R_squared_25$t0
+  )
+boot_ixn_25 <- boot_ixn_25 |> 
+  mutate(
+    model = "full factorial (R = 25)",
+    t0 = ixn_boot_R_squared_25$t0
+  )
+boot_main_eff <- boot_main_eff |> 
+  mutate(
+    model = "main effects only (R = 10000)", 
+    t0 = main_eff_boot_R_squared_10000$t0
+  )
+boot_ixn <- boot_ixn |> 
+  mutate(
+    model = "full factorial (R = 10000)",
+    t0 = ixn_boot_R_squared_10000$t0
+  )
+boot_all <- rbind(
+  boot_main_eff_25, boot_ixn_25, boot_main_eff, boot_ixn
+)
+boot_all <- boot_all |> 
+  rename(R2 = V1)
+
+# orig values
+orig_t0 <- boot_all |> 
+  group_by(model) |> 
+  summarize(t0 = mean(t0))
+
+# now can plot the results together
+boot_all |> 
+  ggplot(aes(x = R2, fill = model)) +
+  
+  # plot histogram
+  geom_density() +
+  
+  # adjust scale
+  scale_x_continuous(name = expression("R" ^ 2), n.breaks = 6, limits = c(.4, 1)) +
+  
+  # plot lines for t0
+  geom_vline(data = orig_t0, aes(xintercept = t0), linetype = "dashed") +
+  
+  # now facet
+  facet_wrap(~model) +
+  
+  # formatting
+  theme_bw() +
+  
+  theme(
+    legend.position = "none", 
+    text = element_text(size = 14), 
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  )
+```
+
+*Figure 1* - Plot showing smoothed density of bootstrap R-squared estimates for each model and bootstrap sample size. Dashed lines represent t0, or the original estimate for each.
+
+With more samples, the distributions begin to approximate normality (as expected by the central limit theorem). The full factorial distributions also seem to lean more to the right of the dashed line (original R-squared) as negative skew, which could represent consistent overfitting of the data in the bootstrap samples.
+
+I also plotted the confidence intervals generated for the bootstrapped R-squared statistics for each of the models sampled 10,000 times.
+
+#### Figure 2
+
+```{r}
+#| echo: false
+#| warning: false
+#| label: plotting confidence intervals for r-squared statistics generated for 10000 bootstrap sample models
+
+# boot ci
+ci_main_eff_model <- boot.ci(main_eff_boot_R_squared_10000)
+
+# got some ci's and use the bca (bias corrected accelerator values to report)
+
+# create new tibble to store data for comparison plot in 2.
+boot_results_comparison <- tibble(
+  model = "main effects only", 
+  R2 = ci_main_eff_model$t0,
+  ci_LL = ci_main_eff_model$bca[, 4],
+  ci_UL = ci_main_eff_model$bca[, 5]
+)
+
+# now plot the comparison of the ci's
+# need to add boot ci bca results to a new tibble row
+ci_ixn_model <- boot.ci(ixn_boot_R_squared_10000)
+
+boot_results_comparison <- boot_results_comparison |> 
+  add_row(
+    model = "full factorial", 
+    R2 = ci_ixn_model$t0,
+    ci_LL = ci_ixn_model$bca[, 4],
+    ci_UL = ci_ixn_model$bca[, 5]
+  )
+
+# create plot of ci for 10000 samples
+boot_results_comparison |> 
+  ggplot(aes(x = model, y = R2)) +
+  
+  # plot R2 of model
+  geom_bar(stat = "identity", width = .25, fill = "grey90") +
+  
+  # plot the bca CI's
+  geom_errorbar(
+    aes(ymin = ci_LL, ymax = ci_UL),
+    width = .1
+  ) +
+  
+  # formatting
+  scale_y_continuous(
+    name = expression("R" ^ 2), limits = c(0, 1), n.breaks = 10
+  ) +
+  
+  theme_bw() +
+  
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+*Figure 2* - Comparison of bootstrapped R-squared estimates for each model with 10,000 bootstrap samples. Error bars represent 95% C.I.
+
+### 2. Compare results with a t-test
+
+```{r}
+#| warning: false
+#| eval: false
+#| echo: false
+#| label: t-test between models and model selection
+
+t.test(boot_main_eff_25$V1, boot_ixn_25$V1)
+
+t.test(boot_main_eff$V1, boot_ixn$V1)
+
+
+```
+
+#### Table 1
+
+Comparison of model results for each of the four bootstraps ran.
+
+| model             | samples | mean R-squared |   t    |   p    |
+|-------------------|:-------:|:--------------:|:------:|:------:|
+| main effects only |   25    |      .69       | -4.17  | \<.001 |
+| full factorial    |   25    |      .75       |        |        |
+| main effects only |  10000  |      .69       | -79.56 | \<.001 |
+| full factorial    |  10000  |      .76       |        |        |
+
+### Discussion
+
+After creating these bootstrapped statistics, I have come to the conclusion that the full factorial model is not my preferred model. As expected, the R-squared statistic is significantly larger in the full factorial model compared to the main effects only model for small and large bootstrapped samples (see Table 1). Simply explaining more variance as a function of having more predictors is not that impressive.
+
+With more samples, the bootstrapping procedure becomes more confident in its estimates. This is evidenced in the reduced size of the confidence interval (Figure 2) and the results of the t-test (Table 1). On another note, the confidence intervals generated by the bca with `boot.ci()` are asymmetrical, with longer interval in the LL, slightly more so for the full factorial model. This may be due to the fact that the R-squared can't stretch further for the UL, running into the ceiling of one and squishing any potential variation in that direction. Although the tendency for R-squared to favor overfitted models could also impact the shape of the distributions (Figure 1) and the resulting bootstrapped confidence intervals.
+
+### 3. Bootstrap fixed effects estimates for mixed effects model
+
+Using the battalion dataset, I conducted a mixed effects model using the `lmer` command from the `lme4` library. I predicted combat readiness using rank, age, rank \* age interaction, and time as fixed effects with random intercepts. The results are summarized in Table 2.
+
+```{r}
+#| label: lmer model predicting combat readiness (READY) using RANK * AGE + TIME (all centered)
+#| echo: false
+#| warning: false
+
+# center
+battalion <- battalion |> 
+  mutate(
+    c.rank = RANK - mean(RANK, na.rm = T),
+    c.age = AGE - mean(AGE, na.rm = T),
+    c.time = TIME - mean(TIME, na.rm = T)
+  )
+
+# now run model
+ready_mixed_model <- lmer(
+  READY ~ c.rank * c.age + c.time + (c.time | SUBNUM),
+  data = battalion
+)
+
+lmer_report <- tidy(ready_mixed_model)
+
+# round to two
+lmer_report <- lmer_report |> 
+  mutate_if(is.numeric, round, digits = 2)
+```
+
+#### Table 2
+
+Parameter estimates for the mixed effects model predicting readiness.
+
+| estimate    |  B   | SE  |   t   |
+|-------------|:----:|:---:|:-----:|
+| intercept   | 3.04 | .03 | 88.32 |
+| rank        | .05  | .01 | 4.41  |
+| age         | .01  | .01 | 1.17  |
+| time        | .10  | .02 | 4.74  |
+| rank \* age | .01  | .00 | 3.38  |
+
+*Note*. Each predictor was mean-centered prior to analysis.
+
+#### Now bootstrap the model
+
+#### Figure 3
+
+```{r}
+#| warning: false
+#| label: plotting results of bootstrap lmer model fixed effects estimates
+#| echo: false
+
+# # create function to use as boot statistic
+# sample_subset_and_return_fixed_eff <- function(df, indices) {
+#   # grab subset of rows
+#   df <- df[indices, ]
+#   
+#   # return fixed eff from lmer model same as above
+#   return(fixef(lmer(READY ~ c.rank * c.age + c.time + (c.time | SUBNUM), data = df)))
+#   
+# }
+# 
+# # run boot now
+# mixed_model_fix_eff_boot <- boot(
+#   data = battalion, statistic = sample_subset_and_return_fixed_eff,
+#   R = 1000
+# )
+
+# read in results
+mixed_model_fix_eff_boot <- read_rds("rds/lmer-model-fixed-eff-boot.rds")
+
+# bca doesn't work here for some reason, and when i switch to percent, it only
+# returns the conf interval for the intercept?
+# instead will just approximate by ordering output and grabbing 5th and 95th %tile
+intercept <- quantile(mixed_model_fix_eff_boot$t[,1], probs = c(.05, .95), type = 6) #intercept
+rank <- quantile(mixed_model_fix_eff_boot$t[,2], probs = c(.05, .95), type = 6)
+age <- quantile(mixed_model_fix_eff_boot$t[,3], probs = c(.05, .95), type = 6)
+time <- quantile(mixed_model_fix_eff_boot$t[,4], probs = c(.05, .95), type = 6)
+rank_age <- quantile(mixed_model_fix_eff_boot$t[,5], probs = c(.05, .95), type = 6)
+
+# now plot
+# put into table
+ci_lmer_table <- tibble(
+  estimate = c("intercept", "rank", "age", "time", "rank*age"),
+  mean = c(
+    mean(mixed_model_fix_eff_boot$t[,1]), mean(mixed_model_fix_eff_boot$t[,2]),
+    mean(mixed_model_fix_eff_boot$t[,3]), mean(mixed_model_fix_eff_boot$t[,4]),
+    mean(mixed_model_fix_eff_boot$t[,5])
+  ),
+  ci_ll = c(intercept[1], rank[1], age[1], time[1], rank_age[1]),
+  ci_ul = c(intercept[2], rank[2], age[2], time[2], rank_age[2])
+)
+
+# add orig se
+ci_lmer_table <- ci_lmer_table |> 
+  add_column(
+    orig_se = c(.0344, .011, .0055, .0216, .00205)
+  )
+
+# now plot comp of new ci (green) vs old ci (black)
+ci_lmer_table |> 
+  filter(estimate != "intercept") |> 
+  ggplot(aes(x = estimate, y = mean)) +
+  
+  # plot bars
+  geom_bar(stat = "identity", width = .5, fill = "grey90") +
+  
+  # plot errors
+  # se
+  geom_errorbar(
+    aes(ymin = mean - 2*orig_se, ymax = mean + 2*orig_se), 
+    width = .17
+  ) +
+  # ci
+  geom_errorbar(
+    aes(ymin = ci_ll, ymax = ci_ul), 
+    color = "green",
+    width = .2
+  ) +
+  
+  # formatting
+  scale_y_continuous("Predicted Readiness", n.breaks = 8) +
+  
+  theme_bw() +
+  
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+```
+
+*Figure 3* - Bootstrapped samples fixed effects estimates for the mixed effects model (excluding intercept). The black error bars represent +/- 2 S.E. generated by the original model fit, and the green error bars represent the 95% C.I. generated by the bootstrapped samples.
+
+#### Discussion
+
+The mixed effects model returned a few significant predictors, although the goal for this section was to probe the differences in interpretation returned from the fixed effect error estimates between the standard errors and a bootstrapped 95% confidence interval for the same fixed effect. Although there are slight differences, like the C.I. being slightly smaller for each estimate, I am not really sure what the advantage of this approach would be. I feel like the standard errors that `lmer` spits out are good enough in this instance. Perhaps it could help with plotting, creating error ribbons that represent the C.I. rather than the estimation of the C.I. using +/- 2 standard errors could be beneficial for visualization and clarity.
+
+### 5. Bootstrap standard deviation and median of usarrests data
+
+I used similar syntax with `boot` to create confidence intervals for statistics that usually do not have those available due to some lacking theoretical formulas for their calculation. I will run bootstrapped samples of standard deviation and median rape per 100,000 by state in the USArrests dataset.
+
+#### Figure 4
+
+```{r}
+#| warning: false
+#| label: standard deviation histogram
+#| echo: false
+
+# create bootstrap function
+sample_subset_and_calc_sd <- function(df, indices) {
+  # grab subset of rows
+  df <- df[indices, ]
+  
+  # calc and return sd
+  return(sd(df$Rape))
+}
+
+# now run the bootstrap
+boot_sd <- boot(
+  data = usarrests, statistic = sample_subset_and_calc_sd,
+  R = 1000
+)
+
+# get ci's
+boot_sd_ci <- boot.ci(boot_sd)
+
+# plot
+# put into df
+boot_sd_output <- as.data.frame(boot_sd$t)
+# add orig sd into df as col
+boot_sd_output <- boot_sd_output |> 
+  add_column(
+    t0 = boot_sd$t0[1]
+  )
+
+# ggplot
+ggplot(boot_sd_output, aes(x = V1)) +
+  
+  # plot histogram
+  geom_histogram(bins = 100, fill = "steelblue") +
+  
+  # adjust scale
+  scale_x_continuous(name = "standard deviation", n.breaks = 16) +
+  
+  # plot lines for t0
+  geom_vline(aes(xintercept = t0[1]), linetype = "dashed") +
+  
+  # formatting
+  theme_bw() +
+  
+  theme(
+    legend.position = "none", 
+    text = element_text(size = 14), 
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  )
+```
+
+*Figure 4* - Histogram of bootstrapped standard deviation values for rape per 100,000 in the USArrests dataset.
+
+#### Figure 5
+
+```{r}
+#| warning: false
+#| label: confidence interval plot for standard deviation
+#| echo: false
+
+boot_sd_ci_df <- tibble(
+  t0 = boot_sd_ci$t0,
+  ci_ll = boot_sd_ci$bca[, 4],
+  ci_ul = boot_sd_ci$bca[, 5]
+)
+
+# plot
+boot_sd_ci_df |> 
+  ggplot(aes(x = "estimate", y = t0)) +
+  
+  # bar
+  geom_bar(stat = "identity", fill = "grey90", width = .25) +
+  
+  # errors
+  geom_errorbar(aes(ymin = ci_ll, ymax = ci_ul), width = .1) +
+  
+  # formatting
+  scale_y_continuous(
+    name = "standard deviation", n.breaks = 10
+  ) +
+  
+  scale_x_discrete(name = "") +
+  
+  theme_bw() +
+  
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+*Figure 5* - Original standard deviation of the USArrests dataset with bootstrapped 95% C.I. errorbars.
+
+#### Median
+
+#### Figure 6
+
+```{r}
+#| warning: false
+#| label: histogram of bootstrapped median values
+#| echo: false
+
+# create function for median
+sample_subset_and_calc_median <- function(df, indices) {
+  # grab subset of rows
+  df <- df[indices, ]
+  
+  # calc and return sd
+  return(median(df$Rape))
+}
+
+# now run bootstrap
+boot_median <- boot(
+  data = usarrests, statistic = sample_subset_and_calc_median,
+  R = 1000
+)
+
+# get ci's
+boot_median_ci <- boot.ci(boot_median)
+
+# put into df
+boot_median_output <- as.data.frame(boot_median$t)
+# add orig sd into df as col
+boot_median_output <- boot_median_output |> 
+  add_column(
+    t0 = boot_median$t0[1]
+  )
+
+# ggplot
+ggplot(boot_median_output, aes(x = V1)) +
+  
+  # plot histogram
+  geom_histogram(bins = 100, fill = "steelblue") +
+  
+  # adjust scale
+  scale_x_continuous(name = "median", n.breaks = 16) +
+  
+  # plot lines for t0
+  geom_vline(aes(xintercept = t0[1]), linetype = "dashed") +
+  
+  # formatting
+  theme_bw() +
+  
+  theme(
+    legend.position = "none", 
+    text = element_text(size = 14), 
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank()
+  )
+```
+
+*Figure 6* - Histogram of bootstrapped median values for rape per 100,000 from USArrests dataset.
+
+#### Figure 7
+
+```{r}
+#| warning: false
+#| label: bootstrapped confidence intervals for median
+#| echo: false
+
+# now ci
+boot_median_ci_df <- tibble(
+  t0 = boot_median_ci$t0,
+  ci_ll = boot_median_ci$bca[, 4],
+  ci_ul = boot_median_ci$bca[, 5]
+)
+
+# plot
+boot_median_ci_df |> 
+  ggplot(aes(x = "estimate", y = t0)) +
+  
+  # bar
+  geom_bar(stat = "identity", fill = "grey90", width = .25) +
+  
+  # errors
+  geom_errorbar(aes(ymin = ci_ll, ymax = ci_ul), width = .1) +
+  
+  # formatting
+  scale_y_continuous(
+    name = "standard deviation", n.breaks = 10
+  ) +
+  
+  scale_x_discrete(name = "") +
+  
+  theme_bw() +
+  
+  theme(
+    panel.grid.minor.y = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+```
+
+*Figure 7* - Original value of median with bootstrapped 95% C.I. for rape per 100,000 in USArrests dataset.
+
+#### Discussion
+
+After bootstrapping both the standard deviation and median statistics for this sample, there were some immediate differences that stood out to me. The histogram of bootstrapped values for the median is strange. It seems positively skewed but also has some weird poisson like characteristics of peaks at certain values and gaps for others. This statistic is likely more constrained than the standard deviation. The median must pull a value from the dataset at hand, leading to consistent sampling of the same values. The standard deviation is not constrained in the same way, it simply calculates a value from each new bootstrap sample with no regard for what values it must output.
+
+The documentation for `boot` says it uses `ran.gen` to index data, but I'm not exactly sure how this could change the shape or why there is more variation on the lower end below the dashed line in Figure 6. It could be due to the skewed shape of the original distribution. If the larger values are nixed when indexing, it is more likely then to be using the lower half of the dataset. Since there are more small values though, if these get nixed during indexing, it likely won't push the bootstrap estimate up as much. So, the result is more samples of smaller values.
+
+### 6. Bootstrap Poisson model estimates
+
+I watched a video the other day where this Ph.D. student was at a conference and decided to track the amount of times a speaker "umm-ed" during their talk (['I found a weird pattern in how people UHM' by NotDavid on YouTube](https://www.youtube.com/watch?v=anSjZS63T7s)). They used a clicker to track the amount of umms as well as how much time elapsed between them (inter-umm time or IUT). Using this data, I ran a generalized mixed effects model using a poisson error distribution with fixed effects of professional science communicator status (professional speaker or not), centered time of their speech, and the interaction with random intercepts. The model was run using the `glmer` command from the `lme4` library. The results are summarized in Table 3.
+
+```{r}
+#| warning: false
+#| label: poisson umm count model
+#| eval: false
+#| echo: false
+
+# is in weird format, each col is diff. subj. and each row is var.
+# row 1 is professional communicator status (1 yes, 2 no)
+# all rows after that are uhms in their talk, values w/n cell are inter uhm time
+
+# can use transpose to reverse this format
+uhm_counts <- as.data.frame(t(uhm_counts))
+
+# rename cols
+uhm_counts <- uhm_counts |> 
+  rename(
+    prof_status = V1
+  )
+names(uhm_counts) <- str_replace_all(names(uhm_counts), "V", "uhm_")
+
+# add id col
+uhm_counts <- uhm_counts |> 
+  rownames_to_column("subject")
+
+# create aggregate count var to run poisson
+uhm_counts$total_uhms <- rowSums(uhm_counts[3:length(uhm_counts)] > 0)
+
+uhm_counts$time_no_uhms <- rowSums(uhm_counts[3:length(uhm_counts)])
+
+uhm_counts <- uhm_counts |> 
+  mutate(
+    ave_iut = time_no_uhms / total_uhms
+  )
+
+uhm_counts_agg <- uhm_counts |> 
+  select(subject, prof_status, total_uhms, time_no_uhms, ave_iut)
+
+# sum code prof status
+uhm_counts_agg$prof_status <- as.factor(uhm_counts_agg$prof_status)
+contrasts(uhm_counts_agg$prof_status) <- contr.sum(2)
+
+# non prof = 1, prof = -1
+
+# put time no uhms into minutes to ease convergence
+uhm_counts_agg <- uhm_counts_agg |> 
+  mutate(
+    min_spoke = time_no_uhms / 60, 
+    c.min_spoke = min_spoke - mean(min_spoke)
+  )
+
+# run poisson predicting number of uhms in speech from speaker status and rough 
+# est of speech time (time no uhms) with random intercept
+poisson_uhmm <- glmer(
+  total_uhms ~ prof_status * c.min_spoke + (1 | subject), 
+  family = "poisson",
+  data = uhm_counts_agg
+)
+```
+
+#### Table 3
+
+| estimate             |   B   |  SE  |   t   |   p    |
+|----------------------|:-----:|:----:|:-----:|:------:|
+| intercept            | 4.339 | .102 | 42.72 | \<.001 |
+| professional speaker | .376  | .101 | 3.71  | \<.001 |
+| minutes spoke        | .009  | .005 | 1.60  |  .110  |
+| interaction          | .002  | .005 |  .45  |  .650  |
+
+*Note* - Model fixed effect estimates for poisson generalized mixed effects model predicting "umms". Estimates and errors are log-transformed counts of "umms." Minutes spoke was a centered continuous predictor and professional speaker was an effect-coded, 2-level categorical variable.
+
+#### Bootstrapping the model
+
+Like previous examples, I also bootstrapped the fixed effects estimates for this model.
+
+#### Figure 8
+
+```{r}
+#| warning: false
+#| label: plot of errors for poisson model fixed effects
+#| echo: false
+
+# read in if needed
+poisson_boot <- read_rds("rds/poisson-uhm-count-boot.rds")
+
+# check out the fixed ef
+poisson_boot_ci <- boot.ci(poisson_boot)
+
+intercept <- quantile(poisson_boot$t[,1], probs = c(.05, .95), type = 6) #intercept
+prof_status <- quantile(poisson_boot$t[,2], probs = c(.05, .95), type = 6)
+minutes <- quantile(poisson_boot$t[,3], probs = c(.05, .95), type = 6)
+interaction <- quantile(poisson_boot$t[,4], probs = c(.05, .95), type = 6)
+
+# now plot
+# put into table
+ci_poisson_table <- tibble(
+  estimate = c("intercept", "prof_status", "minutes", "interaction"),
+  mean = c(
+    mean(poisson_boot$t[,1]), mean(poisson_boot$t[,2]),
+    mean(poisson_boot$t[,3]), mean(poisson_boot$t[,4])
+  ),
+  ci_ll = c(intercept[1], prof_status[1], minutes[1], interaction[1]),
+  ci_ul = c(intercept[2], prof_status[2], minutes[2], interaction[2])
+)
+
+# add orig se
+ci_poisson_table <- ci_poisson_table |> 
+  add_column(
+    orig_se = c(.102, .101, .005, .005)
+  )
+
+# now plot comp of new ci (green) vs old ci (black)
+ci_poisson_table |> 
+  filter(estimate != "intercept") |> 
+  ggplot(aes(x = estimate, y = mean)) +
+  
+  # plot bars
+  geom_bar(stat = "identity", width = .5, fill = "grey90") +
+  
+  # plot errors
+  # se
+  geom_errorbar(
+    aes(ymin = mean - 2*orig_se, ymax = mean + 2*orig_se), 
+    width = .17
+  ) +
+  # ci
+  geom_errorbar(
+    aes(ymin = ci_ll, ymax = ci_ul), 
+    color = "green",
+    width = .2
+  ) +
+  
+  # formatting
+  scale_y_continuous("Predicted Umms", n.breaks = 8) +
+  
+  theme_bw() +
+  
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank()
+  )
+```
+
+*Figure 8* - Comparison of fixed effect estimates measure of error with +/- 2 S.E. in black and 95% bootstrapped C.I. in green.
+
+#### Discussion
+
+After running the model, I found some significant results (Table 3). As expected, being a professional speaker resulted in fewer "umms" being predicted (*B* = .376, *SE* = .101, bootstrapped 95% C.I. = \[.188, .545\], *p* \< .001). Unexpectedly, the amount of minutes spoken for did not result in a significant difference in "umms" (*B* = .009, *SE* = .005, bootstrapped 95% C.I. = \[-.001, .017\], *p* = .110), and the interaction between professional status and minutes spoken was not significant (*B* = .002, *SE* = .005, bootstrapped 95% C.I. = \[-.009, .011\], *p* = .650). I would have expected that with more time, the speaker would have more chances to "umm." Perhaps those speaking for longer stretches of time at a conference or talk feel inclined to rehearse more and therefore are less likely to "err" or "umm" during their time.
