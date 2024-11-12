@@ -1,0 +1,10 @@
+"effect" "group" "term" "estimate" "std.error" "statistic"
+"1" "fixed" NA "(Intercept)" 3.04 0.03 88.32
+"2" "fixed" NA "c.rank" 0.05 0.01 4.41
+"3" "fixed" NA "c.age" 0.01 0.01 1.17
+"4" "fixed" NA "c.time" 0.1 0.02 4.74
+"5" "fixed" NA "c.rank:c.age" 0.01 0 3.38
+"6" "ran_pars" "SUBNUM" "sd__(Intercept)" 0.56 NA NA
+"7" "ran_pars" "SUBNUM" "cor__(Intercept).c.time" -0.06 NA NA
+"8" "ran_pars" "SUBNUM" "sd__c.time" 0.25 NA NA
+"9" "ran_pars" "Residual" "sd__Observation" 0.53 NA NA
